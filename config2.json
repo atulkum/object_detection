@@ -1,5 +1,5 @@
 {
-	"root_dir":"/Users/atulkumar/Downloads/work/kggpy",
+	"root_dir":"<project_dir>",
 	"batch_size": 4,
 	"orig_img_size": 786,
 	"in_size": 448,
