@@ -65,9 +65,10 @@ def get_gen_img_mask(dir_path, empty_img_id, non_empty_img_id, masks):
 
 def get_anchors(config):
     anchors = []
+    orig_img_size = config['orig_img_size']
     for anchor in config['anchors']:
-        wb = anchor['w']
-        hb = anchor['h']
+        wb = anchor['w'] / float(orig_img_size)
+        hb = anchor['h'] / float(orig_img_size)
         anchors.append((wb, hb))
 
     return np.array(anchors)

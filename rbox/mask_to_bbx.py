@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import cv2
-from rbox.data_utils import rle_decode
+from data_utils import rle_decode
 
 def create_rbox():
     masks = pd.read_csv('../input/train_ship_segmentations_bbox.csv')

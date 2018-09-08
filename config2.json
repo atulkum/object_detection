@@ -1,26 +1,29 @@
 {
-	"root_dir":"<project_dir>",
-	"batch_size": 4,
+	"root_dir":"/Users/atulkumar/Downloads/work/kggpy",
+	"batch_size": 8,
 	"orig_img_size": 786,
 	"in_size": 448,
 	"S": 7,
 	"n_channel": 3,
-	"n_iters": 2000,
+	"n_iters": 100,
 	"print_every": 1,
-	"eval_every" : 500,
+	"eval_every" : 50,
 	"lr" : 0.001,
-	"anchors" : [{"w":0.15, "h":0.03}],
+	"anchors" : [{"w": 15.42, "h":14.81}, {"w": 25.74, "h":120.96}, {"w": 122.21, "h":25.69}],
 	"angle_mult" : 30,
-	"B": 1,
-	"A": 1,
+	"B": 3,
+	"A": 3,
 
 	"lambda_obj": 5.0,
 	"lambda_noobj": 1.0,
 	"lambda_coor":1.0,
 
-	"nms_threshold" : 0.2,
+	"nms_threshold" : 0.0,
 	"conf_threshold" : 0.5,
 	"ariou_threshold" : 0.5,
+
+	"is_dataset_aug": 0,
+	"is_img_aug": 0,
 
 	"use_cuda" : 0
 }

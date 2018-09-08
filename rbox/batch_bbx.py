@@ -51,45 +51,42 @@ class Batch(object):
         return imsz
 
     def img_preprocess(self, im):
-        im, _, trans_param = imcv2_affine_trans(im)
+        trans_param = None
+        if self.config["is_img_aug"]:
+            im, _, trans_param = imcv2_affine_trans(im)
+            im = imcv2_recolor(im)
 
-        im = imcv2_recolor(im)
         im = self.resize_input(im)
-
-        im = im / 255.
         im = self.to_tensor(im)
         im = self.whiten_img(im)
 
         return im, trans_param
 
     def bbx_preprocess(self, obj, trans_param):
-        scale, offs, flip = trans_param
         orig_l = self.config["orig_img_size"]
-
-        xoff, yoff = offs
         x, y, wb, hb, a = obj
 
         # angle between the longer side and vertical
         offset = 180 if wb < hb else 90
         a += offset
-
-        x = x * scale - xoff
-        x = max(min(x, orig_l), 0)
-        y = y * scale - yoff
-        y = max(min(y, orig_l), 0)
-        wb = min(wb * scale, orig_l)
-        hb = min(hb * scale, orig_l)
-        if flip:
-            # only consider horizontal flip
-            x = orig_l - x
-            a = 180 - a
+        if trans_param is not None:
+            scale, offs, flip = trans_param
+            xoff, yoff = offs
+            x = x * scale - xoff
+            x = max(min(x, orig_l), 0)
+            y = y * scale - yoff
+            y = max(min(y, orig_l), 0)
+            wb = min(wb * scale, orig_l)
+            hb = min(hb * scale, orig_l)
+            if flip:
+                # only consider horizontal flip
+                x = orig_l - x
+                a = 180 - a
 
         return x, y, wb, hb, a
 
     def get_bbx_regressor(self, allobj, trans_param):
-        S = self.config['S']
-        B = self.config['B']
-        A = self.config['A']
+        S, B, A = self.config['S'], self.config['B'], self.config['A']
         orig_l = self.config["orig_img_size"]
         angle_mult = self.config["angle_mult"]
 

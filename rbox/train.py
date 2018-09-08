@@ -1,32 +1,25 @@
 import json
 import logging
 import os
-import shutil
 import sys
 import time
 
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 import torch
 import torch.optim as optim
 
+from train_utils import create_dirs, get_model, write_summary
 from batcher_bbx import Batcher, RandomGenerator, SequenceGenerator
-from rbox.rolo import RotatedYolo
 
 logging.basicConfig(level=logging.INFO)
-
-def write_summary(value, tag, summary_writer, global_step):
-    summary = tf.Summary()
-    summary.value.add(tag=tag, simple_value=value)
-    summary_writer.add_summary(summary, global_step)
 
 class Train(object):
     def __init__(self, config_file):
         self.config = json.load(open(config_file))
 
         self.read_dataset(self.config['root_dir'])
-        self.create_dirs(self.config['root_dir'])
+        self.model_dir, self.bestmodel_path, self.summary_writer = create_dirs(self.config['root_dir'], config_file)
     
     def read_dataset(self, root_dir):
         data_dir = os.path.join(root_dir, 'input')
@@ -45,24 +38,6 @@ class Train(object):
         self.val_empty_img_id = []
         ######
         self.masks = pd.read_csv(os.path.join(data_dir, 'train_ship_segmentations_bbox.csv'))
-
-    def create_dirs(self, root_dir):
-        log_dir = os.path.join(root_dir, 'log')
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
-
-        train_dir = os.path.join(log_dir, 'train_%d' % (int(time.time())))
-        if not os.path.exists(train_dir):
-            os.mkdir(train_dir)
-
-        self.model_dir = os.path.join(train_dir, 'model')
-        if not os.path.exists(self.model_dir):
-            os.mkdir(self.model_dir)
-        shutil.copy(config_file, train_dir)
-
-        self.bestmodel_path = os.path.join(self.model_dir, 'bestmodel')
-        self.summary_writer = tf.summary.FileWriter(train_dir)
-
         
     def save_model(self, exp_loss, iter):
         logging.info("Saving to %s..." % self.bestmodel_path)
@@ -101,7 +76,7 @@ class Train(object):
         else:
             return -1
 
-    def setup_train(self, model_file_path=None):
+    def setup_train(self, model_name, model_file_path=None):
         #batcher
         train_gen = RandomGenerator(self.train_empty_img_id ,
                                     self.train_non_empty_img_id,
@@ -110,9 +85,7 @@ class Train(object):
         self.train_batcher = Batcher(train_gen)
 
         #model
-        self.model = RotatedYolo(self.config)
-        if self.config['use_cuda']:
-            self.model = self.model.cuda()
+        self.model = get_model(model_name, self.config)
 
         params = self.model.parameters()
         req_params = filter(lambda p: p.requires_grad, self.model.parameters())
@@ -152,8 +125,8 @@ class Train(object):
 
         return loss.item()
         
-    def trainIters(self, model_file_path=None):
-        iter, exp_loss = self.setup_train(model_file_path)
+    def trainIters(self, model_name, model_file_path):
+        iter, exp_loss = self.setup_train(model_name, model_file_path)
         start = time.time()
         best_dev_loss = None
 
@@ -184,5 +157,10 @@ class Train(object):
 
 if __name__ == '__main__':
     config_file = sys.argv[1]
+    model_name = sys.argv[2]
+    model_file_path = None
+    if len(sys.argv) > 3:
+        model_file_path = sys.argv[2]
     train_processor = Train(config_file)
-    train_processor.trainIters()
+
+    train_processor.trainIters(model_name, model_file_path)

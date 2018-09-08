@@ -30,10 +30,11 @@ class RandomGenerator(AbstractGenerator):
         self.empty_ids = empty_ids
         self.nonempty_ids = nonempty_ids
 
-    def create_batch(self, augmented = False):
+    def create_batch(self):
         all_img_objs = []
         all_img_ids = []
         batch_size = self.config['batch_size']
+        augmented = self.config['is_dataset_aug']
 
         non_empty_n = batch_size/2 if augmented else batch_size
         non_empty_id = np.random.choice(self.nonempty_ids, non_empty_n, replace=False)
