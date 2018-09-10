@@ -31,7 +31,6 @@ class Predict(object):
         conf_pred, centerxy_pred, wh_pred, angle_pred = self.model(img)
 
         angle_pred = self.model.get_angle_degree(angle_pred)
-
         conf_pred = conf_pred.cpu().data.numpy()
         centerxy_pred = centerxy_pred.cpu().data.numpy()
         wh_pred = wh_pred.cpu().data.numpy()
@@ -110,3 +109,4 @@ if __name__ == '__main__':
 
 
     predictor.dump_result(img_ids, root_dir + "input/train", root_dir + "log")
+

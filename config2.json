@@ -18,7 +18,7 @@
 	"lambda_noobj": 1.0,
 	"lambda_coor":1.0,
 
-	"nms_threshold" : 0.2,
+	"nms_threshold" : 0.0,
 	"conf_threshold" : 0.5,
 	"ariou_threshold" : 0.5,
 

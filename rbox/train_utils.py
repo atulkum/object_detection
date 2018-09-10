@@ -16,8 +16,8 @@ def create_dirs(root_dir, config_file):
     model_dir = os.path.join(train_dir, 'model')
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
-    shutil.copy(config_file, os.path.join(train_dir, 'config.json'))
 
+    shutil.copy(config_file, os.path.join(train_dir, 'config.json'))
     bestmodel_path = os.path.join(model_dir, 'bestmodel')
     summary_writer = tf.summary.FileWriter(train_dir)
 

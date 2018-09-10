@@ -78,7 +78,7 @@ class Train(object):
         else:
             return -1
 
-    def setup_train(self, model_file_path=None):
+    def setup_train(self, model_name, model_file_path=None):
         #batcher
         train_gen = RandomGenerator(self.train_empty_img_id ,
                                     self.train_non_empty_img_id,
@@ -88,7 +88,6 @@ class Train(object):
 
         #model
         self.model = get_model(self.config)
-
         params = self.model.parameters()
         req_params = filter(lambda p: p.requires_grad, self.model.parameters())
         logging.info("Number of params: %d Number of params required grad: %d" % (sum(p.numel() for p in params),
