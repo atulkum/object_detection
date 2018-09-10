@@ -6,6 +6,7 @@ from im_transform import imcv2_affine_trans, imcv2_recolor
 from torchvision import transforms
 import cv2
 from collections import defaultdict
+from data_utils import get_angle_anchors, draw_rectangle
 
 class Batch(object):
     def __init__(self, config, all_img_objs, img_ids):
@@ -13,13 +14,12 @@ class Batch(object):
         self.config = config
         self.to_tensor = transforms.ToTensor()
         self.whiten_img = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        A = self.config['A']
-        angle_mult = self.config['angle_mult']
-        self.angle_anchor = np.arange(0, A * angle_mult, angle_mult)
-
+        A = self.config['A'] 
         all_vars = defaultdict(list)
+        
+        self.angle_anchor = get_angle_anchors(self.config)
 
-        for img, all_obj in all_img_objs:
+        for i, (img, all_obj) in enumerate(all_img_objs):
             im, trans_param = self.img_preprocess(img)     
             all_vars['img'].append(im)
 
@@ -31,7 +31,6 @@ class Batch(object):
                 all_vars['upleft'].append(torch.from_numpy(upleft))
                 all_vars['botright'].append(torch.from_numpy(botright))
                 all_vars['areas'].append(torch.from_numpy(areas))
-
         self.to_vars(all_vars)
 
     def __len__(self):
@@ -87,38 +86,37 @@ class Batch(object):
 
     def get_bbx_regressor(self, allobj, trans_param):
         S, B, A = self.config['S'], self.config['B'], self.config['A']
-        orig_l = self.config["orig_img_size"]
-        angle_mult = self.config["angle_mult"]
-
-        angle_anchor = np.arange(0, A * angle_mult, angle_mult)
+        orig_img_size = self.config["orig_img_size"]
+        
+        cellxy = 1. * S / orig_img_size 
 
         confs = np.zeros([S * S, B, A])
         center_wh = np.zeros([S * S, B, A, 4])
         angle = np.zeros([S * S, B, A])
         prear = np.zeros([S * S, 4])
-
+        
         for j, obj in enumerate(allobj):
             x, y, wb, hb, a = self.bbx_preprocess(obj, trans_param)
 
-            cx = (x / orig_l) * S
-            cy = (y / orig_l) * S
+            cx = x * cellxy
+            cy = y * cellxy
 
             #offset inside the grid
             x = cx - np.floor(cx)
             y = cy - np.floor(cy)
 
             #proportion of size with respect to whole image
-            wb = wb / orig_l
-            hb = hb / orig_l
+            wb = wb * cellxy
+            hb = hb * cellxy
 
             #caching for iou calculation
             # which grid cell the center fall into
             center_offset = int(np.floor(cy) * S + np.floor(cx))
 
-            prear[center_offset, 0] = x - .5 * wb * S # xleft
-            prear[center_offset, 1] = y - .5 * hb * S # yup
-            prear[center_offset, 2] = x + .5 * wb * S # xright
-            prear[center_offset, 3] = y + .5 * hb * S # ybot
+            prear[center_offset, 0] = x - .5 * wb # xleft
+            prear[center_offset, 1] = y - .5 * hb # yup
+            prear[center_offset, 2] = x + .5 * wb # xright
+            prear[center_offset, 3] = y + .5 * hb # ybot
 
             wb = np.sqrt(wb)
             hb = np.sqrt(hb)
@@ -126,7 +124,7 @@ class Batch(object):
             center_wh[center_offset, :, :, :] = [[[x, y, wb, hb]] * A] * B
             confs[center_offset, :, :] = [[1.] * A] * B
             #angle offset
-            angle_offset = a - angle_anchor
+            angle_offset = a - self.angle_anchor
             angle_offset = (angle_offset / 180) * 3.141593
             angle_offset = np.sin(angle_offset)
 

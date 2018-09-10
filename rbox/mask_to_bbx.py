@@ -2,9 +2,27 @@ import numpy as np
 import pandas as pd
 import cv2
 from data_utils import rle_decode
+def split_train_val():
+    train_masks = pd.read_csv('input/train_ship_segmentations_bbox.csv')
+    empty_img = masks[masks['EncodedPixels'].isnull()].ImageId.unique()
+    non_empty_img = masks[~masks['EncodedPixels'].isnull()].ImageId.unique()
+    
+    val_non_empty_img_id = np.random.choice(non_empty_img, len(non_empty_img)/10, replace=False)
+    val_empty_img_id = np.random.choice(empty_img, len(empty_img)/10, replace=False)
 
-def create_rbox():
-    masks = pd.read_csv('../input/train_ship_segmentations_bbox.csv')
+    train_non_empty_img_id = set(non_empty_img) - set(val_non_empty_img_id)
+    train_empty_img_id = set(empty_img) - set(val_empty_img_id)
+
+    np.save('input/val_non_empty_img_id.npy', np.array(list(val_non_empty_img_id)))
+    np.save('input/val_empty_img_id.npy', np.array(list(val_empty_img_id)))
+    np.save('input/train_non_empty_img_id.npy', np.array(list(train_non_empty_img_id)))
+    np.save('input/train_empty_img_id.npy', np.array(list(train_empty_img_id)))
+
+    print len(val_non_empty_img_id), len(train_non_empty_img_id), len(val_non_empty_img_id)+ len(train_non_empty_img_id), \
+    len(val_empty_img_id) , len(train_empty_img_id), len(val_empty_img_id) + len(train_empty_img_id)
+
+def create_rbox(in_filename, out_filename):
+    masks = pd.read_csv('/home/atul/rotated_yolo/input/' + in_filename)
     shape = (768, 768)
     all_masks = masks['EncodedPixels'].tolist()
     xa = []
@@ -63,7 +81,8 @@ def create_rbox():
     masks['w_bbx'] = w_bbx
     masks['h_bbx'] = h_bbx
 
-    masks.to_csv('../input/train_ship_segmentations_bbox.csv', index=False)
+    masks.to_csv('/home/atul/rotated_yolo/input/' + out_filename, index=False)
 
 if __name__ == '__main__':
-    create_rbox()
+    create_rbox('test_ship_segmentations.csv', 'test_ship_segmentations_bbox.csv')
+    create_rbox('train_ship_segmentations.csv', 'train_ship_segmentations_bbox.csv')

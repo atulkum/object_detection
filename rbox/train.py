@@ -23,12 +23,25 @@ class Train(object):
     
     def read_dataset(self, root_dir):
         data_dir = os.path.join(root_dir, 'input')
+            
+        self.masks = pd.read_csv(os.path.join(data_dir, 'train_ship_segmentations_bbox.csv'))
+        test_masks = pd.read_csv(os.path.join(data_dir, 'test_ship_segmentations_bbox.csv'))
+        self.masks = self.masks.append(test_masks)
+        
+       
         self.val_non_empty_img_id = np.load(os.path.join(data_dir, 'val_non_empty_img_id.npy'))
         self.val_empty_img_id = np.load(os.path.join(data_dir,'val_empty_img_id.npy'))
+        
         self.train_non_empty_img_id = np.load(os.path.join(data_dir,'train_non_empty_img_id.npy'))
         self.train_empty_img_id = np.load(os.path.join(data_dir, 'train_empty_img_id.npy'))
+        
+        test_empty = test_masks[test_masks['EncodedPixels'].isnull()].ImageId.unique()
+        test_non_empty = test_masks[~test_masks['EncodedPixels'].isnull()].ImageId.unique()
+        self.train_non_empty_img_id = np.append(self.train_non_empty_img_id, test_non_empty)
+        self.train_empty_img_id = np.append(self.train_empty_img_id, test_empty)
+        
         #####
-        '''
+        
         nonemp = ['002fdcf51.jpg', '6d948c270.jpg', '6d97350bf.jpg', '6d9833913.jpg', '6d98c508a.jpg', '6d9b9be19.jpg',
                   '6d9d3ed34.jpg', '6d9e5af16.jpg']
 
@@ -37,9 +50,9 @@ class Train(object):
 
         self.val_non_empty_img_id = nonemp
         self.val_empty_img_id = []
-        '''
+        
         ######
-        self.masks = pd.read_csv(os.path.join(data_dir, 'train_ship_segmentations_bbox.csv'))
+        
         
     def save_model(self, exp_loss, iter):
         logging.info("Saving to %s..." % self.bestmodel_path)

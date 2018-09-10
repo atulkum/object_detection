@@ -67,13 +67,6 @@ def write_anchors_to_file(centroids, X, anchor_file):
 
     anchors = centroids.copy()
     print(anchors.shape)
-    ''' 
-    orig_img_sz = 768.
-    S = 7.
-    for i in range(anchors.shape[0]):
-        anchors[i][0] *= orig_img_sz / S
-        anchors[i][1] *= orig_img_sz / S
-    '''
 
     widths = anchors[:, 0]
     sorted_indices = np.argsort(widths)
@@ -93,8 +86,10 @@ if __name__ == '__main__':
     output_dir = sys.argv[2]
 
     masks = pd.read_csv(os.path.join(data_dir, 'train_ship_segmentations_bbox.csv'))
-    img_ids = np.load(os.path.join(data_dir, 'val_non_empty_img_id.npy'))
-    img_ids = np.concatenate((img_ids, np.load(os.path.join(data_dir, 'train_non_empty_img_id.npy'))))
+    test_masks = pd.read_csv(os.path.join(data_dir, 'test_ship_segmentations_bbox.csv'))
+    masks = masks.append(test_masks)
+    img_ids = masks[~masks['EncodedPixels'].isnull()].ImageId.unique()
+    
     objs = []
     for img_id in img_ids:
         w = masks.loc[masks['ImageId'] == img_id, 'w'].tolist()
@@ -104,7 +99,7 @@ if __name__ == '__main__':
             objs.append(obj)
 
     annotation_dims = np.array(objs)
-
+    print('annotation_dims.shape', annotation_dims.shape)
     eps = 0.005
     for num_clusters in range(1, 11):
         anchor_file = os.path.join(output_dir, 'anchors%d.txt' % (num_clusters))

@@ -1,24 +1,24 @@
 {
 	"root_dir":"/home/atul/rotated_yolo",
-	"batch_size": 12,
+	"batch_size": 8,
 	"orig_img_size": 786,
-	"in_size": 448,
-	"S": 7,
+	"in_size": 416,
+	"S": 13,
 	"n_channel": 3,
-	"n_iters": 20000,
-	"print_every": 1,
-	"eval_every" : 1,
-	"lr" : 0.001,
-	"anchors" : [{"w": 15.42, "h":14.81}, {"w": 25.74, "h":120.96}, {"w": 122.21, "h":25.69}],
-	"angle_mult" : 90,
-	"B": 3,
+	"n_iters": 2000,
+	"print_every": 50,
+	"eval_every" : 100,
+	"lr" : 0.0001,
+	"anchors" : [{"w": 25.74, "h":120.96}, {"w": 122.21, "h":25.69}],
+	"angle_mult" : 60,
+	"B": 2,
 	"A": 3,
 
 	"lambda_obj": 5.0,
 	"lambda_noobj": 1.0,
 	"lambda_coor":1.0,
 
-	"nms_threshold" : 0.0,
+	"nms_threshold" : 0.2,
 	"conf_threshold" : 0.5,
 	"ariou_threshold" : 0.5,
 
@@ -26,7 +26,7 @@
 	"is_img_aug": 0,
 
 	"loss_type": "l1",
-    "model_name": "RotatedYoloSmall",
+    "model_name": "RotatedYoloLarge",
 
 	"use_cuda" : 1
 }

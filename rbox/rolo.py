@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch
 import numpy as np
 from torch.autograd import Variable
-from data_utils import get_anchors
+from data_utils import get_anchors, get_angle_anchors
 
 cfg = {
     'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -105,7 +105,8 @@ class RotatedYoloBase(nn.Module):
         anchors = get_anchors(self.config)
         self.anchors_scale = Variable(torch.from_numpy(np.reshape(anchors, [1, 1, B, 1, 2])).float(),
                                       requires_grad=False)
-        angle_anchor = np.arange(0, A * angle_mult, angle_mult)
+        angle_anchor = get_angle_anchors(self.config)
+        
         self.angle_anchors = Variable(torch.from_numpy(np.reshape(angle_anchor, [1, 1, 1, A])).float(),
                                       requires_grad=False)
         self.S_wh_scale = Variable(torch.from_numpy(np.reshape([S, S], [1, 1, 1, 1, 2])).float(), requires_grad=False)
@@ -148,7 +149,8 @@ class RotatedYoloBase(nn.Module):
         # ratio w and h
         wh = torch.exp(wh) * self.anchors_scale
         # angle for each bbx
-        angle = F.tanh(angle)
+        #angle = F.tanh(angle)
+        angle = F.sigmoid(angle)
         ######
 
         return confidence, centerxy, wh, angle
@@ -165,12 +167,12 @@ class RotatedYoloBase(nn.Module):
         loss_type = self.config['loss_type']
         S, B, A = self.config['S'], self.config['B'], self.config['A']
 
-        conf_pred, centerxy_pred, wh_pred, angle_pred = predictions
+        conf_pred, centerxy_pred, wh_pred_S, angle_pred = predictions
 
-        confs_mask = self.get_best_boxes(batch, centerxy_pred, wh_pred, angle_pred)
+        confs_mask = self.get_best_boxes(batch, centerxy_pred, wh_pred_S, angle_pred)
 
         # take care of the weight terms
-        center_wh_angle_pred = torch.cat((centerxy_pred, torch.sqrt(wh_pred), angle_pred.unsqueeze(-1)), -1)
+        center_wh_angle_pred = torch.cat((centerxy_pred, torch.sqrt(wh_pred_S), angle_pred.unsqueeze(-1)), -1)
 
         center_wh_sz = center_wh_angle_pred.size()[-1]
         center_wh_wt = torch.cat(center_wh_sz * [confs_mask.unsqueeze(-1)], -1)
@@ -202,7 +204,7 @@ class RotatedYoloBase(nn.Module):
         # print loss_obj, loss_centerxy
         return loss
 
-    def get_best_boxes(self, batch, centerxy_pred, wh_pred, angle_pred):
+    def get_best_boxes(self, batch, centerxy_pred, wh_pred_S, angle_pred):
         S, B, A = self.config['S'], self.config['B'], self.config['A']
         ariou_threshold = self.config['ariou_threshold']
         ########################################
@@ -210,8 +212,6 @@ class RotatedYoloBase(nn.Module):
         # this should be max rotated iou
         ########################################
         # calculate best iou predicted
-        # project the wh on S grid
-        wh_pred_S = wh_pred * self.S_wh_scale
         area_pred_S = wh_pred_S[:, :, :, :, 0] * wh_pred_S[:, :, :, :, 1]
         upleft_pred_S = centerxy_pred - (wh_pred_S * .5)
         botright_pred_S = centerxy_pred + (wh_pred_S * .5)
@@ -293,7 +293,7 @@ class RotatedYoloLarge(RotatedYoloBase):
         conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
         layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
 
-        layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        #layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
 
         return nn.Sequential(*layers)
 

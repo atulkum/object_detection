@@ -78,6 +78,15 @@ def get_anchors(config):
 
     return np.array(anchors)
 
+def get_angle_anchors(config):
+    angle_mult = config["angle_mult"]
+    A = config["A"]
+        
+    if angle_mult == 0:
+        angle_anchor = np.array([0.0])
+    else:
+        angle_anchor = np.arange(0, A * angle_mult, angle_mult)
+    return angle_anchor
 
 def get_bbx(img_id, masks):
     if masks is None:
@@ -87,6 +96,17 @@ def get_bbx(img_id, masks):
     w = masks.loc[masks['ImageId'] == img_id, 'w'].tolist()
     h = masks.loc[masks['ImageId'] == img_id, 'h'].tolist()
     a = masks.loc[masks['ImageId'] == img_id, 'a'].tolist()
+
+    return zip(*[x, y, w, h, a])
+
+def get_bbx_no_angle(img_id, masks):
+    if masks is None:
+        return []
+    x = masks.loc[masks['ImageId'] == img_id, 'x_bbx'].tolist()
+    y = masks.loc[masks['ImageId'] == img_id, 'y_bbx'].tolist()
+    w = masks.loc[masks['ImageId'] == img_id, 'w_bbx'].tolist()
+    h = masks.loc[masks['ImageId'] == img_id, 'h_bbx'].tolist()
+    a = [0.0]*len(h)
 
     return zip(*[x, y, w, h, a])
 

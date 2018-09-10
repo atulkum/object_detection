@@ -11,10 +11,12 @@ def box_iou_rotated(centerxy1, wh1, angle1, centerxy2, wh2, angle2):
     rrect2 = ((x2, y2), (w2, h2), angle2)
     ret, poly = cv2.rotatedRectangleIntersection(rrect1, rrect2)
 
-    if ret > 0:
-        intersection_area = cv2.contourArea(poly)
+    if ret == 2:
+        return 1.
+    elif ret == 0:
+        return 0.
     else:
-        intersection_area = 0
+        intersection_area = cv2.contourArea(poly)
 
     iou = intersection_area / (w1 * h1 + w2 * h2 - intersection_area)
     return iou
@@ -46,43 +48,34 @@ def box_iou_axis_aligned(centerxy1, wh1, centerxy2, wh2):
     iou = intersection_area / (w1 * h1 + w2 * h2 - intersection_area)
     return iou
 
-
 def nms(config, conf, centerxy, wh, angle):
     threshold = config['conf_threshold']
     nms_threshold = config['nms_threshold']
-
+    
     sorted_conf = np.flip(np.argsort(conf), axis=0)
-    discarded_indices = set()
 
-    pred_length = len(sorted_conf)
-    for i1 in range(pred_length):
-        idx1 = sorted_conf[i1]
-        # only consider boundin boxes having conf > threshold
-        if conf[idx1] <= threshold: break
-        # is idx1 is already discarded continue
-        if idx1 in discarded_indices: continue
-
-        for i2 in range(i1 + 1, pred_length):
-            idx2 = sorted_conf[i2]
-            if conf[idx2] <= threshold: break
-            if idx2 in discarded_indices: continue
-
-            if box_iou_rotated(centerxy[idx1], wh[idx1], angle[idx1],
-                                    centerxy[idx2], wh[idx2], angle[idx2]) > nms_threshold:
-                discarded_indices.add(idx2)
-
+    indices = []
+    for i in range(len(sorted_conf)):
+        idx = sorted_conf[i]
+        if conf[idx] <= threshold: break
+        
+        keep = True;
+        for k in range(len(indices)): 
+            if not keep:
+                break
+            kept_idx = indices[k];
+            overlap = box_iou_rotated(centerxy[idx], wh[idx], angle[idx],
+                                    centerxy[kept_idx], wh[kept_idx], angle[kept_idx]) 
+            keep = (overlap <= threshold)
+        
+        if keep:
+            indices.append(idx);
+            
     boxes = list()
-    for idx in sorted_conf:
-        if idx not in discarded_indices and conf[idx] > threshold:
-            x, y = centerxy[idx]
-            w, h = wh[idx]
+    for idx in indices:
+        x, y = centerxy[idx]
+        w, h = wh[idx]
 
-            boxes.append((x, y, w, h, angle[idx], conf[idx]))
-
+        boxes.append((x, y, w, h, angle[idx], conf[idx]))
+    
     return boxes
-
-if __name__ == '__main__':
-    #<type 'tuple'>: ((59.553284, 407.77975), (63.709957, 59.200657), 27.584908)
-    #<type 'tuple'>: ((94.235535, 381.20895), (12.19889, 16.471848), -71.986496)
-
-    print box_iou_rotated((59.553284, 407.77975), (63.709957, 59.200657),27.584908, (94.235535, 381.20895), (12.19889, 16.471848),  -71.986496)

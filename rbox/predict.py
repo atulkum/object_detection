@@ -35,9 +35,10 @@ class Predict(object):
         centerxy_pred = centerxy_pred.cpu().data.numpy()
         wh_pred = wh_pred.cpu().data.numpy()
         angle_pred = angle_pred.cpu().data.numpy()
-
-        wh_pred = wh_pred * orig_img_size
+        
         cellxy = 1. * orig_img_size / S
+        wh_pred = wh_pred * cellxy 
+        
         angle_pred = np.clip(angle_pred, 0.0, 180.0)
 
         boxes = {}
@@ -104,7 +105,7 @@ class Predict(object):
 
 if __name__ == '__main__':
     root_dir = '/home/atul/rotated_yolo/'
-    predictor = Predict(root_dir + 'log/train_1536420579')
+    predictor = Predict(root_dir + 'log/train_1536595991')
     img_ids = ['6d9b9be19.jpg','002fdcf51.jpg', '6d948c270.jpg', '6d97350bf.jpg', '6d9833913.jpg', '6d98c508a.jpg', '6d9b9be19.jpg', '6d9d3ed34.jpg', '6d9e5af16.jpg']
 
 
