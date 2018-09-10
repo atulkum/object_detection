@@ -5,6 +5,9 @@ import numpy as np
 import traceback
 from data_utils import get_img, get_gen_img_mask, get_bbx
 from batch_bbx import Batch
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 class AbstractGenerator(object):
     def __init__(self, config, masks):
@@ -13,11 +16,16 @@ class AbstractGenerator(object):
 
     def get_img_bbx(self, img_id):
         img = get_img(self.config, img_id)
+        if img is None:
+            return None, None
         all_obj = get_bbx(img_id, self.masks)
         return img, all_obj
 
     def get_gen_img_bbox(self, empty_img_id, non_empty_img_id):
         img, _ = get_gen_img_mask(self.config, empty_img_id, non_empty_img_id, self.masks)
+        if img is None:
+            return None, None
+        
         all_obj = get_bbx(non_empty_img_id, self.masks)
         return img, all_obj
 
@@ -29,17 +37,21 @@ class RandomGenerator(AbstractGenerator):
         super(RandomGenerator, self).__init__(config, masks)
         self.empty_ids = empty_ids
         self.nonempty_ids = nonempty_ids
+        logging.info('empty_ids %d, nonempty_ids %d'%(len(empty_ids), len(nonempty_ids)))
 
-    def create_batch(self, augmented = False):
+    def create_batch(self):
         all_img_objs = []
         all_img_ids = []
         batch_size = self.config['batch_size']
+        augmented = self.config['is_dataset_aug']
 
         non_empty_n = batch_size/2 if augmented else batch_size
         non_empty_id = np.random.choice(self.nonempty_ids, non_empty_n, replace=False)
         for idx in non_empty_id:
-            all_img_ids.append(idx)
             img, all_obj = self.get_img_bbx(idx)
+            if img is None:
+                continue
+            all_img_ids.append(idx)
             all_img_objs.append((img, all_obj))
 
         if augmented:
@@ -47,8 +59,10 @@ class RandomGenerator(AbstractGenerator):
             aug_id_nonempty = np.random.choice(self.nonempty_ids, batch_size / 2, replace=False)
 
             for i in range(len(aug_id_empty)):
-                all_img_ids.append('%s-%s'%(aug_id_empty[i], aug_id_nonempty[i]))
                 img, all_obj = self.get_gen_img_bbox(aug_id_empty[i], aug_id_nonempty[i])
+                if img is None:
+                    continue
+                all_img_ids.append('%s-%s'%(aug_id_empty[i], aug_id_nonempty[i]))
                 all_img_objs.append((img, all_obj))
 
         return Batch(self.config, all_img_objs, all_img_ids)
@@ -60,8 +74,9 @@ class RandomGenerator(AbstractGenerator):
 class SequenceGenerator(AbstractGenerator):
     def __init__(self, empty_ids, nonempty_ids, config, masks):
         super(SequenceGenerator, self).__init__(config, masks)
-        self.img_ids = np.concatenate((empty_ids, nonempty_ids))
+        self.img_ids = nonempty_ids #np.concatenate((empty_ids, nonempty_ids))
         self.masked_set = nonempty_ids
+        logging.info('empty_ids %d, nonempty_ids %d'%(len(empty_ids), len(nonempty_ids)))
 
     def create_batch(self, idx):
         batch_size = self.config['batch_size']
@@ -73,6 +88,8 @@ class SequenceGenerator(AbstractGenerator):
             else:
                 img = get_img(self.config, img_id)
                 all_obj = []
+            if img is None:
+                continue
             all_img_ids.append(img_id)
             all_img_objs.append((img, all_obj))
 
@@ -87,6 +104,7 @@ class TestSequenceGenerator(AbstractGenerator):
     def __init__(self, img_ids, config):
         super(TestSequenceGenerator, self).__init__(config, None)
         self.img_ids = img_ids
+        logging.info('img_ids %d'%(len(img_ids)))
 
     def create_batch(self, idx):
         batch_size = self.config['batch_size']
@@ -94,6 +112,8 @@ class TestSequenceGenerator(AbstractGenerator):
         all_img_ids = []
         for img_id in self.img_ids[idx: idx + batch_size]:
             img = get_img(self.config, img_id)
+            if img is None:
+                continue
             all_obj = None
             all_img_ids.append(img_id)
             all_img_objs.append((img, all_obj))

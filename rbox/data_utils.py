@@ -45,6 +45,8 @@ def get_img(config, img_id):
 
 def get_mask_img(config, img_id, masks):
     img = get_img(config, img_id)
+    if img is None:
+        return None, None
     shape = img.shape
     img_masks = masks.loc[masks['ImageId'] == img_id, 'EncodedPixels'].tolist()
 
@@ -53,8 +55,11 @@ def get_mask_img(config, img_id, masks):
 
 def get_gen_img_mask(dir_path, empty_img_id, non_empty_img_id, masks):
     img = get_img(dir_path, empty_img_id)
+    if img is None:
+        return None
     img_ne, all_masks = get_mask_img(dir_path, non_empty_img_id, masks)
-
+    if img_ne is None:
+        return None
     shape = img.shape
 
     for i in range(shape[0]):
@@ -65,9 +70,10 @@ def get_gen_img_mask(dir_path, empty_img_id, non_empty_img_id, masks):
 
 def get_anchors(config):
     anchors = []
+    orig_img_size = config['orig_img_size']
     for anchor in config['anchors']:
-        wb = anchor['w']
-        hb = anchor['h']
+        wb = anchor['w'] / float(orig_img_size)
+        hb = anchor['h'] / float(orig_img_size)
         anchors.append((wb, hb))
 
     return np.array(anchors)
@@ -92,7 +98,9 @@ def draw_rectangle(image_path, img, bboxes, out_dir, angle_offset=False):
     else:
         img_id = img
         imgcv = get_img(image_path, img_id)
-
+    if img is None:
+        return
+    
     w_orig, h_orig, _ = imgcv.shape
 
     for x, y, w, h, angle in bboxes:

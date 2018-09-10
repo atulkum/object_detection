@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch
 import numpy as np
 from torch.autograd import Variable
-from rbox.data_utils import get_anchors
+from data_utils import get_anchors
 
 cfg = {
     'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -70,7 +70,7 @@ def make_layers(cfg, batch_norm=False):
         else:
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
             if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+                layers += [conv2d, nn.BatchNorm2d(v), nn.LeakyReLU(inplace=True)]
             else:
                 layers += [conv2d, nn.ReLU(inplace=True)]
             in_channels = v
@@ -94,14 +94,12 @@ def vgg19_bn(pretrained=False, **kwargs):
     return model
 
 
-class RotatedYolo(nn.Module):
+class RotatedYoloBase(nn.Module):
     def __init__(self, config):
-        super(RotatedYolo, self).__init__()
+        super(RotatedYoloBase, self).__init__()
         self.config = config
         ##variables which does not need gradient
-        S = self.config['S']
-        B = self.config['B']
-        A = self.config['A']
+        S, B, A = self.config['S'], self.config['B'], self.config['A']
         angle_mult = self.config['angle_mult']
 
         anchors = get_anchors(self.config)
@@ -117,38 +115,16 @@ class RotatedYolo(nn.Module):
             self.S_wh_scale = self.S_wh_scale.cuda()
             self.angle_anchors = self.angle_anchors.cuda()
 
+        self.features_all = self.get_features()
+        self.regions = self.get_regions()
+        self.classifier = self.get_classifier()
 
-        features = vgg16_bn(True).features
-        modules = list(features.children())
-        self.features_all = nn.Sequential(*modules)
-
-        layers = []
-
-        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
-        layers += [conv2d, nn.BatchNorm2d(1024), nn.ReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
-        layers += [conv2d, nn.BatchNorm2d(512), nn.ReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
-        layers += [conv2d, nn.BatchNorm2d(1024), nn.ReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
-        layers += [conv2d, nn.BatchNorm2d(512), nn.ReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
-        layers += [conv2d, nn.BatchNorm2d(1024), nn.ReLU(inplace=True)]
-
-        layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-
-        self.regions = nn.Sequential(*layers)
-
-        B = self.config['B']
-        A = self.config['A']
-        self.classifier = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Conv2d(1024, B * A * (1 + 2 + 2 + 1), kernel_size=1),
-        )
+    def get_features(self):
+        pass
+    def get_regions(self):
+        pass
+    def get_classifier(self):
+        pass
 
     def forward(self, x):
         batch_size = x.size()[0]
@@ -156,8 +132,7 @@ class RotatedYolo(nn.Module):
         x = self.regions(x)
         x = self.classifier(x)
 
-        B = self.config['B']
-        A = self.config['A']
+        B, A = self.config['B'], self.config['A']
 
         x = x.view((batch_size, -1, B, A, 6))
 
@@ -168,11 +143,11 @@ class RotatedYolo(nn.Module):
 
         #####post processing
         confidence = F.sigmoid(confidence)
-        #offset with respect to the grid cell
+        # offset with respect to the grid cell
         centerxy = F.sigmoid(centerxy)
-        #ratio w and h
+        # ratio w and h
         wh = torch.exp(wh) * self.anchors_scale
-        #angle for each bbx
+        # angle for each bbx
         angle = F.tanh(angle)
         ######
 
@@ -187,6 +162,7 @@ class RotatedYolo(nn.Module):
         lambda_noobj = self.config['lambda_noobj']
         lambda_obj = self.config['lambda_obj']
         lambda_coor = self.config['lambda_coor']
+        loss_type = self.config['loss_type']
         S, B, A = self.config['S'], self.config['B'], self.config['A']
 
         conf_pred, centerxy_pred, wh_pred, angle_pred = predictions
@@ -201,19 +177,29 @@ class RotatedYolo(nn.Module):
         center_wh_wt = lambda_coor * center_wh_wt
 
         batch_center_wh_angle = torch.cat((batch.center_wh, batch.angle.unsqueeze(-1)), -1)
-        loss_centerxy = F.smooth_l1_loss(center_wh_angle_pred, batch_center_wh_angle) * center_wh_wt
+        if loss_type == 'l2':
+            loss_centerxy = torch.nn.MSELoss(center_wh_angle_pred, batch_center_wh_angle)
+        else:
+            loss_centerxy = F.smooth_l1_loss(center_wh_angle_pred, batch_center_wh_angle) 
+            
+        loss_centerxy = loss_centerxy * center_wh_wt
         loss_centerxy = torch.reshape(loss_centerxy, [-1, S * S * B * A * center_wh_sz])
-        loss_centerxy = torch.sum(loss_centerxy, 1)
+        loss_centerxy = torch.sum(loss_centerxy, 1) / torch.sum(confs_mask)
 
-        #only calculate conf of the selected anchor bounding box
+        # only calculate conf of the selected anchor bounding box
         conf_wt = lambda_noobj * (1. - confs_mask) + lambda_obj * confs_mask
-        loss_obj = F.smooth_l1_loss(conf_pred, confs_mask) * conf_wt
+        if loss_type == 'l2':
+            loss_obj = torch.nn.MSELoss(conf_pred, confs_mask) 
+        else:
+            loss_obj = F.smooth_l1_loss(conf_pred, confs_mask) 
+            
+        loss_obj = loss_obj * conf_wt
         loss_obj = torch.reshape(loss_obj, [-1, S * S * B * A])
-        loss_obj = torch.sum(loss_obj, 1)
+        loss_obj = torch.sum(loss_obj, 1) / torch.sum(confs_mask)
 
         loss = loss_centerxy + loss_obj
         loss = .5 * torch.mean(loss)
-        #print loss_obj, loss_centerxy
+        # print loss_obj, loss_centerxy
         return loss
 
     def get_best_boxes(self, batch, centerxy_pred, wh_pred, angle_pred):
@@ -224,8 +210,8 @@ class RotatedYolo(nn.Module):
         # this should be max rotated iou
         ########################################
         # calculate best iou predicted
-        #project the wh on S grid
-        wh_pred_S = wh_pred *  self.S_wh_scale
+        # project the wh on S grid
+        wh_pred_S = wh_pred * self.S_wh_scale
         area_pred_S = wh_pred_S[:, :, :, :, 0] * wh_pred_S[:, :, :, :, 1]
         upleft_pred_S = centerxy_pred - (wh_pred_S * .5)
         botright_pred_S = centerxy_pred + (wh_pred_S * .5)
@@ -258,3 +244,63 @@ class RotatedYolo(nn.Module):
 
         return confs_mask
 
+class RotatedYoloSmall(RotatedYoloBase):
+    def __init__(self, config):
+        super(RotatedYoloSmall, self).__init__(config)
+
+    def get_features(self):
+        features = vgg16_bn(True).features
+        modules = list(features.children())
+        return nn.Sequential(*modules)
+
+    def get_regions(self):
+        layers = []
+        layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        return nn.Sequential(*layers)
+
+    def get_classifier(self):
+        B, A = self.config['B'], self.config['A']
+
+        return nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Conv2d(512, B * A * (1 + 2 + 2 + 1), kernel_size=1),
+        )
+
+class RotatedYoloLarge(RotatedYoloBase):
+    def __init__(self, config):
+        super(RotatedYoloLarge, self).__init__(config)
+
+    def get_features(self):
+        features = vgg16_bn(True).features
+        modules = list(features.children())
+        return nn.Sequential(*modules)
+
+    def get_regions(self):
+        layers = []
+
+        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
+        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
+        layers += [conv2d, nn.BatchNorm2d(512), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
+        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
+        layers += [conv2d, nn.BatchNorm2d(512), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
+        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
+
+        layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+
+        return nn.Sequential(*layers)
+
+    def get_classifier(self):
+        B, A = self.config['B'], self.config['A']
+
+        return nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Conv2d(1024, B * A * (1 + 2 + 2 + 1), kernel_size=1),
+        )
