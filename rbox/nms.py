@@ -7,6 +7,9 @@ def box_iou_rotated(centerxy1, wh1, angle1, centerxy2, wh2, angle2):
     x2, y2 = centerxy2
     w2, h2 = wh2
 
+    if int(y2) == 387 or int(y1) == 387:
+        pass
+
     rrect1 = ((x1, y1), (w1, h1), angle1)
     rrect2 = ((x2, y2), (w2, h2), angle2)
     ret, poly = cv2.rotatedRectangleIntersection(rrect1, rrect2)
@@ -18,7 +21,8 @@ def box_iou_rotated(centerxy1, wh1, angle1, centerxy2, wh2, angle2):
     else:
         intersection_area = cv2.contourArea(poly)
 
-    iou = intersection_area / (w1 * h1 + w2 * h2 - intersection_area)
+    #iou = intersection_area / (w1 * h1 + w2 * h2 - intersection_area)
+    iou = intersection_area / min(w1 * h1, w2 * h2)
     return iou
 
 
@@ -45,7 +49,8 @@ def box_iou_axis_aligned(centerxy1, wh1, centerxy2, wh2):
     else:
         intersection_area = w * h
 
-    iou = intersection_area / (w1 * h1 + w2 * h2 - intersection_area)
+    #iou = intersection_area / (w1 * h1 + w2 * h2 - intersection_area)
+    iou = intersection_area / min(w1 * h1, w2 * h2)
     return iou
 
 def nms(config, conf, centerxy, wh, angle):
@@ -59,17 +64,17 @@ def nms(config, conf, centerxy, wh, angle):
         idx = sorted_conf[i]
         if conf[idx] <= threshold: break
         
-        keep = True;
+        keep = True
         for k in range(len(indices)): 
             if not keep:
                 break
-            kept_idx = indices[k];
+            kept_idx = indices[k]
             overlap = box_iou_rotated(centerxy[idx], wh[idx], angle[idx],
                                     centerxy[kept_idx], wh[kept_idx], angle[kept_idx]) 
-            keep = (overlap <= threshold)
+            keep = (overlap < nms_threshold)
         
         if keep:
-            indices.append(idx);
+            indices.append(idx)
             
     boxes = list()
     for idx in indices:
