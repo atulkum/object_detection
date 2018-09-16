@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from torch.autograd import Variable
 from data_utils import get_anchors, get_angle_anchors
+from iou_utils import get_ariou_torch
 
 cfg = {
     'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -155,11 +156,6 @@ class RotatedYoloBase(nn.Module):
 
         return confidence, centerxy, wh, angle
 
-    def get_angle_degree(self, angle_pred):
-        angle_pred = torch.asin(angle_pred)
-        angle_pred = angle_pred * 180 / 3.141593 + self.angle_anchors
-        return angle_pred
-
     def calculate_loss(self, predictions, batch):
         lambda_noobj = self.config['lambda_noobj']
         lambda_obj = self.config['lambda_obj']
@@ -212,26 +208,7 @@ class RotatedYoloBase(nn.Module):
         # this should be max rotated iou
         ########################################
         # calculate best iou predicted
-        area_pred_S = wh_pred_S[:, :, :, :, 0] * wh_pred_S[:, :, :, :, 1]
-        upleft_pred_S = centerxy_pred - (wh_pred_S * .5)
-        botright_pred_S = centerxy_pred + (wh_pred_S * .5)
-
-        # calculate the intersection areas (remember the indices runs from top to bottom and left to right
-        intersect_upleft_S = torch.max(upleft_pred_S, batch.upleft)
-        intersect_botright_S = torch.min(botright_pred_S, batch.botright)
-        intersect_wh_S = intersect_botright_S - intersect_upleft_S
-        intersect_wh_S = torch.nn.Threshold(0.0, 0.0)(intersect_wh_S)
-        intersect_area_S = intersect_wh_S[:, :, :, :, 0] * intersect_wh_S[:, :, :, :, 1]
-
-        # calculate the best IOU, set 0.0 confidence for worse boxes
-        union_area = batch.areas + area_pred_S - intersect_area_S
-        iou = intersect_area_S / union_area
-
-        angle_pred = self.get_angle_degree(angle_pred)
-
-        agnle_iou = torch.cos(angle_pred - batch.angle).abs()
-        ariou = iou * agnle_iou
-        ariou = torch.nn.Threshold(ariou_threshold, 0.0)(ariou)
+        ariou = get_ariou_torch(wh_pred_S, centerxy_pred, angle_pred, batch)
         ariou = torch.reshape(ariou, (-1, S * S, B * A))
         # pick max iou bounding box cells
         max_ariou, _ = torch.max(ariou, dim=2, keepdim=True)
@@ -304,3 +281,78 @@ class RotatedYoloLarge(RotatedYoloBase):
             nn.Dropout(p=0.5),
             nn.Conv2d(1024, B * A * (1 + 2 + 2 + 1), kernel_size=1),
         )
+
+
+class RotatedYoloPyramid(RotatedYoloBase):
+    def __init__(self, config):
+        super(RotatedYoloPyramid, self).__init__(config)
+
+    def get_features(self):
+        features = vgg16_bn(True).features
+        modules = list(features.children())
+        return nn.Sequential(*modules)
+
+    def get_regions(self):
+        layers = []
+
+        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
+        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
+        layers += [conv2d, nn.BatchNorm2d(512), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
+        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
+        layers += [conv2d, nn.BatchNorm2d(512), nn.LeakyReLU(inplace=True)]
+
+        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
+        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
+
+        #layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+
+        return nn.Sequential(*layers)
+
+    def get_classifier(self):
+        B, A = self.config['B'], self.config['A']
+
+        return nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Conv2d(1024, B * A * (1 + 2 + 2 + 1), kernel_size=1),
+        )
+
+    def forward(self, x):
+        batch_size = x.size()[0]
+        #x = self.features_all(x)
+
+        results = []
+        for ii, model in enumerate(self.features_all):
+            x = model(x)
+            if ii in {25, 40, 43}:
+                results.append(x)
+
+        x = self.regions(x)
+        x = self.classifier(x)
+
+        B, A = self.config['B'], self.config['A']
+
+        x = x.view((batch_size, -1, B, A, 6))
+
+        confidence = x[:, :, :, :, 0]
+        centerxy = x[:, :, :, :, 1:3]
+        wh = x[:, :, :, :, 3:5]
+        angle = x[:, :, :, :, 5]
+
+        #####post processing
+        confidence = F.sigmoid(confidence)
+        # offset with respect to the grid cell
+        centerxy = F.sigmoid(centerxy)
+        # ratio w and h
+        wh = torch.exp(wh) * self.anchors_scale
+        # angle for each bbx
+        #angle = F.tanh(angle)
+        angle = F.sigmoid(angle)
+        ######
+
+        return confidence, centerxy, wh, angle
