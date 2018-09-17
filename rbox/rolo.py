@@ -1,3 +1,5 @@
+from __future__ import division
+from math import sqrt as sqrt
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
@@ -6,21 +8,16 @@ import numpy as np
 from torch.autograd import Variable
 from data_utils import get_anchors, get_angle_anchors
 from iou_utils import get_ariou_torch
+import torch.nn.init as init
+from itertools import product as product
 
 cfg = {
-    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-    'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'D_300': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'C', 512, 512, 512, 'M', 512, 512, 512],
     'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
 }
 
 model_urls = {
-    'vgg11': 'https://download.pytorch.org/models/vgg11-bbd30ac9.pth',
-    'vgg13': 'https://download.pytorch.org/models/vgg13-c768596a.pth',
-    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
-    'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth',
-    'vgg11_bn': 'https://download.pytorch.org/models/vgg11_bn-6002323d.pth',
-    'vgg13_bn': 'https://download.pytorch.org/models/vgg13_bn-abd245e5.pth',
     'vgg16_bn': 'https://download.pytorch.org/models/vgg16_bn-6c64b313.pth',
     'vgg19_bn': 'https://download.pytorch.org/models/vgg19_bn-c79401a0.pth',
 }
@@ -68,6 +65,8 @@ def make_layers(cfg, batch_norm=False):
     for v in cfg:
         if v == 'M':
             layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        elif v == 'C':
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)]
         else:
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
             if batch_norm:
@@ -208,7 +207,7 @@ class RotatedYoloBase(nn.Module):
         # this should be max rotated iou
         ########################################
         # calculate best iou predicted
-        ariou = get_ariou_torch(wh_pred_S, centerxy_pred, angle_pred, batch)
+        ariou = get_ariou_torch(wh_pred_S, centerxy_pred, angle_pred, batch, self.angle_anchors)
         ariou = torch.reshape(ariou, (-1, S * S, B * A))
         # pick max iou bounding box cells
         max_ariou, _ = torch.max(ariou, dim=2, keepdim=True)
@@ -283,76 +282,146 @@ class RotatedYoloLarge(RotatedYoloBase):
         )
 
 
-class RotatedYoloPyramid(RotatedYoloBase):
-    def __init__(self, config):
-        super(RotatedYoloPyramid, self).__init__(config)
+class L2Norm(nn.Module):
+    def __init__(self,n_channels, scale):
+        super(L2Norm,self).__init__()
+        self.n_channels = n_channels
+        self.gamma = scale or None
+        self.eps = 1e-10
+        self.weight = nn.Parameter(torch.Tensor(self.n_channels))
+        self.reset_parameters()
 
-    def get_features(self):
-        features = vgg16_bn(True).features
-        modules = list(features.children())
-        return nn.Sequential(*modules)
-
-    def get_regions(self):
-        layers = []
-
-        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
-        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
-        layers += [conv2d, nn.BatchNorm2d(512), nn.LeakyReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
-        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(1024, 512, kernel_size=1)
-        layers += [conv2d, nn.BatchNorm2d(512), nn.LeakyReLU(inplace=True)]
-
-        conv2d = nn.Conv2d(512, 1024, kernel_size=3, padding=1)
-        layers += [conv2d, nn.BatchNorm2d(1024), nn.LeakyReLU(inplace=True)]
-
-        #layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-
-        return nn.Sequential(*layers)
-
-    def get_classifier(self):
-        B, A = self.config['B'], self.config['A']
-
-        return nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Conv2d(1024, B * A * (1 + 2 + 2 + 1), kernel_size=1),
-        )
+    def reset_parameters(self):
+        init.constant(self.weight,self.gamma)
 
     def forward(self, x):
-        batch_size = x.size()[0]
-        #x = self.features_all(x)
+        norm = x.pow(2).sum(dim=1, keepdim=True).sqrt()+self.eps
+        #x /= norm
+        x = torch.div(x,norm)
+        out = self.weight.unsqueeze(0).unsqueeze(2).unsqueeze(3).expand_as(x) * x
+        return out
 
-        results = []
-        for ii, model in enumerate(self.features_all):
-            x = model(x)
-            if ii in {25, 40, 43}:
-                results.append(x)
+class RotatedSSD():
+    def __init__(self, config):
+        vgg_layers = []
+        in_channels = 3
+        for v in cfg['D_300']:
+            if v == 'M':
+                vgg_layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            elif v == 'C':
+                vgg_layers += [nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)]
+            else:
+                conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+                vgg_layers += [conv2d, nn.ReLU(inplace=True)]
+                in_channels = v
 
-        x = self.regions(x)
-        x = self.classifier(x)
+        features = nn.Sequential(*vgg_layers)
+        features.load_state_dict(model_zoo.load_url(model_urls['vgg16']))
+        vgg_layers = list(features.children())
 
-        B, A = self.config['B'], self.config['A']
+        vgg_layers += [nn.MaxPool2d(kernel_size=3, stride=1, padding=1)]
+        conv6 = nn.Conv2d(512, 1024, kernel_size=3, padding=6, dilation=6)
+        vgg_layers += [conv6, nn.ReLU(inplace=True)]
+        conv7 = nn.Conv2d(1024, 1024, kernel_size=1)
+        vgg_layers += [conv7, nn.ReLU(inplace=True)]
 
-        x = x.view((batch_size, -1, B, A, 6))
+        extra_layers = []
+        in_channels = 1024
+        kernel_size = [1,3]
+        kernel_size_idx = 0
+        extra_300 = [256, 'S', 512, 128, 'S', 256, 128, 256, 128, 256]
+        for k, v in enumerate(extra_300):
+            if in_channels != 'S':
+                if v == 'S':
+                    extra_layers += [nn.Conv2d(in_channels, extra_300[k + 1],
+                                         kernel_size=kernel_size[kernel_size_idx], stride=2, padding=1)]
+                else:
+                    extra_layers += [nn.Conv2d(in_channels, v, kernel_size=kernel_size[kernel_size_idx])]
+                kernel_size_idx = (kernel_size_idx + 1) % 2
+            in_channels = v
 
-        confidence = x[:, :, :, :, 0]
-        centerxy = x[:, :, :, :, 1:3]
-        wh = x[:, :, :, :, 3:5]
-        angle = x[:, :, :, :, 5]
+        self.num_regressor = 6
+        output_layers = []
+        vgg_source = [21, -2]
+        multi_boxes = [4, 6, 6, 6, 4, 4]
+        for k, v in enumerate(vgg_source):
+            output_layers += [nn.Conv2d(vgg_layers[v].out_channels,
+                                                multi_boxes[k] * self.num_regressor, kernel_size=3, padding=1)]
+        for k, v in enumerate(extra_layers[1::2], 2):
+            output_layers += [nn.Conv2d(v.out_channels,
+                                                multi_boxes[k] * self.num_regressor, kernel_size=3, padding=1)]
 
-        #####post processing
-        confidence = F.sigmoid(confidence)
-        # offset with respect to the grid cell
-        centerxy = F.sigmoid(centerxy)
-        # ratio w and h
-        wh = torch.exp(wh) * self.anchors_scale
-        # angle for each bbx
-        #angle = F.tanh(angle)
-        angle = F.sigmoid(angle)
-        ######
+        self.vgg = nn.ModuleList(vgg_layers)
+        self.extras = nn.ModuleList(extra_layers)
+        self.output = nn.ModuleList(output_layers)
 
-        return confidence, centerxy, wh, angle
+        # Layer learns to scale the l2 normalized features from conv4_3
+        self.L2Norm = L2Norm(512, 20)
+
+    def get_prior(self):
+        mean = []
+        feature_maps = [38, 19, 10, 5, 3, 1]
+        image_size = 300
+        steps = [8, 16, 32, 64, 100, 300]
+        min_sizes = [30, 60, 111, 162, 213, 264]
+        max_sizes = [60, 111, 162, 213, 264, 315]
+        aspect_ratios = [[2], [2, 3], [2, 3], [2, 3], [2], [2]]
+        
+
+        for k, f in enumerate(feature_maps):
+            for i, j in product(range(f), repeat=2):
+                f_k = image_size / steps[k]
+                # unit center x,y
+                cx = (j + 0.5) / f_k
+                cy = (i + 0.5) / f_k
+
+                # aspect_ratio: 1
+                # rel size: min_size
+                s_k = min_sizes[k]/image_size
+                mean += [cx, cy, s_k, s_k]
+
+                # aspect_ratio: 1
+                # rel size: sqrt(s_k * s_(k+1))
+                s_k_prime = sqrt(s_k * (max_sizes[k]/image_size))
+                mean += [cx, cy, s_k_prime, s_k_prime]
+
+                # rest of aspect ratios
+                for ar in aspect_ratios[k]:
+                    mean += [cx, cy, s_k*sqrt(ar), s_k/sqrt(ar)]
+                    mean += [cx, cy, s_k/sqrt(ar), s_k*sqrt(ar)]
+
+    def forward(self, x):
+        sources = list()
+        loc = list()
+        conf = list()
+
+        # apply vgg up to conv4_3 relu
+        for k in range(23):
+            x = self.vgg[k](x)
+
+        s = self.L2Norm(x)
+        sources.append(s)
+
+        # apply vgg up to fc7
+        for k in range(23, len(self.vgg)):
+            x = self.vgg[k](x)
+        sources.append(x)
+
+        # apply extra layers and cache source layer outputs
+        for k, v in enumerate(self.extras):
+            x = F.relu(v(x), inplace=True)
+            if k % 2 == 1:
+                sources.append(x)
+
+        # apply multibox head to source layers
+        for (x, l, c) in zip(sources, self.output):
+            loc.append(l(x).permute(0, 2, 3, 1).contiguous())
+
+        loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1)
+
+
+        regressor = loc.view(loc.size(0), -1, self.num_regressor)
+
+        return regressor
+
+

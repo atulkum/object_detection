@@ -1,9 +1,9 @@
 import cv2
 import torch
 
-def get_angle_degree_torch(self, angle_pred):
+def get_angle_degree_torch(angle_pred, angle_anchors):
     angle_pred = torch.asin(angle_pred)
-    angle_pred = angle_pred * 180 / 3.141593 + self.angle_anchors
+    angle_pred = angle_pred * 180 / 3.141593 + angle_anchors
     return angle_pred
 
 def box_iou_rotated(centerxy1, wh1, angle1, centerxy2, wh2, angle2):
@@ -30,7 +30,7 @@ def box_iou_rotated(centerxy1, wh1, angle1, centerxy2, wh2, angle2):
     iou = intersection_area / min(w1 * h1, w2 * h2)
     return iou
 
-def get_ariou_torch(wh_pred_S, centerxy_pred, angle_pred, batch):
+def get_ariou_torch(wh_pred_S, centerxy_pred, angle_pred, batch, angle_anchors):
     area_pred_S = wh_pred_S[:, :, :, :, 0] * wh_pred_S[:, :, :, :, 1]
     upleft_pred_S = centerxy_pred - (wh_pred_S * .5)
     botright_pred_S = centerxy_pred + (wh_pred_S * .5)
@@ -46,7 +46,7 @@ def get_ariou_torch(wh_pred_S, centerxy_pred, angle_pred, batch):
     union_area = batch.areas + area_pred_S - intersect_area_S
     iou = intersect_area_S / union_area
 
-    angle_pred = get_angle_degree_torch(angle_pred)
+    angle_pred = get_angle_degree_torch(angle_pred, angle_anchors)
 
     agnle_iou = torch.cos(angle_pred - batch.angle).abs()
     ariou = iou * agnle_iou
